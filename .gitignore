@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+*.egg-info/
+dist/
+build/
+.ipynb_checkpoints/
+
+# Model weights — stored on Zenodo, not GitHub
+results/weights/
+*.pth
+*.pt
+
+# Data files — download from original sources
+data/
+datasets/
+*.xlsx
+*.csv
+*.mat
+*.dat
+*.hea
+
+# OS
+.DS_Store
+desktop.ini
+Thumbs.db
+Desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
