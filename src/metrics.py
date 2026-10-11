@@ -84,8 +84,14 @@ def _single_lead_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     mae   = float(np.mean(np.abs(err)))
     mse   = float(np.mean(err ** 2))
     rmse  = float(np.sqrt(mse))
+    
     rng   = float(y_true.max() - y_true.min())
-    nrmse = float(rmse / (rng + eps))
+    #nrmse = float(rmse / (rng + eps))
+    if rng <= 1e-6:
+        nrmse = float("nan")
+    else:
+        nrmse = float(rmse / rng)
+    
     sig_p = float(np.sum(y_true ** 2))
     err_p = float(np.sum(err ** 2))
     snr   = float(10.0 * np.log10((sig_p + eps) / (err_p + eps)))

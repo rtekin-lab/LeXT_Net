@@ -9,7 +9,7 @@ Usage:
     python scripts/train_ptbxl.py --model bilstm --strategy EGV3
 
 Supported --model values:
-    bilstm | tcn | atunet | unetpp | leXT-netv1 | leXT-netv2 | ALL
+    bilstm | tcn | transformer | atunet | unetpp | leXT-netv1 | leXT-netv2 | ALL
 
 Supported --strategy values:
     EGV1 | EGV2 | EGV3 | QSI | ALL
@@ -135,17 +135,20 @@ STRATEGY_COL   = {"EGV2": 3, "EGV3": 11, "EGV1": 19, "QSI": 27}
 LEAD_ROWS_MEAN = {"I":4,"II":5,"III":6,"AVR":7,"AVL":8,"AVF":9,
                    "V1":10,"V2":11,"V3":12,"V4":13,"V5":14,"V6":15}
 LEAD_ROWS_STD  = {k: v+18 for k,v in LEAD_ROWS_MEAN.items()}
-MODEL_SHEET    = {"bilstm":"BiLSTM","tcn":"TCN","atunet":"AtUNET",
-                   "unetpp":"UNETPP",
+MODEL_SHEET    = {"bilstm":"BiLSTM","tcn":"TCN","transformer":"Transformer",
+                   "atunet":"AtUNET","unetpp":"UNETPP",
                    "leXT-netv1":"LeXT_Netv1","leXT-netv1s":"LeXT_Netv1",
                    "leXT-netv2":"LeXT_Netv2","leXT-netv2s":"LeXT_Netv2"}
-MODEL_ORDER    = ["bilstm","tcn","atunet","unetpp","leXT-netv1","leXT-netv1s","leXT-netv2","leXT-netv2s"]
+MODEL_ORDER    = ["bilstm","tcn","transformer","atunet","unetpp","leXT-netv1","leXT-netv1s","leXT-netv2","leXT-netv2s"]
 EXCEL_PATH     = ROOT / "results" / "all_results_Norm_R.xlsx"
 
 # ── Original hyperparameters (preserved from source notebooks) ────────────────
 MODEL_CFG = {
     "bilstm":     dict(hidden_size=128, num_layers=2),
     "tcn":        dict(num_filters=64, kernel_size=3, num_layers=6),
+    # Transformer settings reproduced from try7TransOnemli.py
+    "transformer": dict(d_model=64, nhead=4, num_layers=3,
+                        dim_ff=256, dropout=0.1),
     "atunet":     {},
     "unetpp":     dict(base=64),
     "leXT-netv1": dict(trunk_feat_ch=256, trunk_layers=8, trunk_k=9,
@@ -167,18 +170,18 @@ MODEL_CFG = {
                         head_base=64, head_pdrop=0.0,
                         limb_depth=1, chest_depth=2),
 }
-MODEL_LOSS  = {"bilstm":"L1","tcn":"L1","atunet":"L1",
+MODEL_LOSS  = {"bilstm":"L1","tcn":"L1","transformer":"MSE","atunet":"L1",
                "unetpp":"MSE","leXT-netv1":"combined","leXT-netv1s":"combined",
                "leXT-netv2":"combined","leXT-netv2s":"combined"}
-MODEL_LR    = {"bilstm":1e-3,"tcn":1e-3,"atunet":1e-3,
+MODEL_LR    = {"bilstm":1e-3,"tcn":1e-3,"transformer":1e-3,"atunet":1e-3,
                "unetpp":1e-3,"leXT-netv1":3e-4,"leXT-netv1s":3e-4,
                "leXT-netv2":3e-4,"leXT-netv2s":3e-4}
-MODEL_BATCH = {"bilstm":16,"tcn":16,"atunet":16,
+MODEL_BATCH = {"bilstm":16,"tcn":16,"transformer":16,"atunet":16,
                "unetpp":16,"leXT-netv1":32,"leXT-netv1s":32,
                "leXT-netv2":32,"leXT-netv2s":32}
 
 # LeXT-Net models benefit from compile; baselines are fast enough without it
-USE_COMPILE = {"bilstm":False,"tcn":False,"atunet":False,
+USE_COMPILE = {"bilstm":False,"tcn":False,"transformer":False,"atunet":False,
                "unetpp":False,"leXT-netv1":False,"leXT-netv1s":False,"leXT-netv2":False,"leXT-netv2s":False}  # disabled on Windows
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -209,6 +212,8 @@ def build_model(name):
         return BiLSTMModel(input_size=3, output_size=12, **cfg)
     if name == "tcn":
         return TCNBaseline(input_channels=3, output_channels=12, **cfg)
+    if name == "transformer":
+        return ECGTransformer(input_size=3, output_size=12, **cfg)
     if name == "atunet":
         return AttentionUNet(input_size=3, output_size=12)
     if name == "unetpp":
@@ -250,8 +255,13 @@ def train_fold(model, x_tr, y_tr, model_name, epochs, device, n_workers,
     if use_compile and USE_COMPILE[model_name]:
         model = maybe_compile(model)
 
-    opt   = torch.optim.Adam(model.parameters(), lr=lr)
-    # LeXT-Net: warmup + cosine; baselines: constant LR (original protocol)
+    # Transformer preserves the optimizer used in the original Transformer experiment.
+    # Other serial baselines retain their existing optimizer settings.
+    if model_name == "transformer":
+        opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    else:
+        opt = torch.optim.Adam(model.parameters(), lr=lr)
+    # LeXT-Net: warmup + cosine; baselines (including Transformer): constant LR
     if model_name.startswith("leXT"):
         warmup = torch.optim.lr_scheduler.LinearLR(
             opt, start_factor=0.1, total_iters=5)

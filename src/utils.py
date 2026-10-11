@@ -164,12 +164,19 @@ def evaluate_performanceFull(model, test_loader, device,
                             (np.sum(tc ** 2) + eps) / (np.sum((tc - pc) ** 2) + eps)))
                     elif mfn == "nrmse":
                         rng = float(tc.max() - tc.min())
-                        v   = float(np.sqrt(np.mean((tc - pc) ** 2)) / (rng + eps))
+                        #v   = float(np.sqrt(np.mean((tc - pc) ** 2)) / (rng + eps))
+                        if rng <= eps:
+                            v = float("nan")
+                        else:
+                            v = float(np.sqrt(np.mean((tc - pc) ** 2)) / rng)
                     else:
                         v = 0.0
                 except Exception:
-                    v = 0.0
-                row.append(float(np.nan_to_num(v, nan=0.0)))
+                    v = float("nan") if metric_fn == "nrmse" else 0.0
+                if mfn == "nrmse":
+                    row.append(float(v))
+                else:
+                    row.append(float(np.nan_to_num(v, nan=0.0)))
         results.append(row)
     print()
     return results
