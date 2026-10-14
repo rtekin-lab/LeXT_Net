@@ -23,35 +23,49 @@ class BiLSTMModel(nn.Module):
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers,
                             batch_first=True, bidirectional=True,
                             dropout=0.1 if num_layers > 1 else 0.0)
-        self.fc   = nn.Linear(hidden_size * 2, output_size)
-        self.relu = nn.ReLU()
+        # Manuscript-aligned 2-layer MLP projection head.
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_size * 2, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, output_size),
+        )
 
     def forward(self, x):
         out, _ = self.lstm(x)
-        return self.fc(self.relu(out))
+        return self.mlp(out)
 
 
 # ── 2. TCN baseline (Gated Dilated TCN) ──────────────────────────────────────
 
 class _GatedTCNBlock(nn.Module):
-    def __init__(self, channels, kernel_size=3, dilation=1):
+    """Causal gated dilated residual block.
+
+    Left-only padding is applied explicitly so output sample t never depends
+    on input samples later than t.
+    """
+    def __init__(self, channels, kernel_size=7, dilation=1):
         super().__init__()
-        pad = (kernel_size - 1) * dilation // 2
+        self.left_pad = (kernel_size - 1) * dilation
         self.conv_f = nn.Conv1d(channels, channels, kernel_size,
-                                padding=pad, dilation=dilation)
+                                padding=0, dilation=dilation)
         self.conv_g = nn.Conv1d(channels, channels, kernel_size,
-                                padding=pad, dilation=dilation)
+                                padding=0, dilation=dilation)
         self.bn     = nn.BatchNorm1d(channels)
 
     def forward(self, x):
-        h = torch.tanh(self.conv_f(x)) * torch.sigmoid(self.conv_g(x))
+        x_pad = F.pad(x, (self.left_pad, 0))
+        h = torch.tanh(self.conv_f(x_pad)) * torch.sigmoid(self.conv_g(x_pad))
         return F.relu(self.bn(h) + x)
 
 
 class TCNBaseline(nn.Module):
-    """Gated dilated TCN baseline — 6 blocks, num_filters=64."""
+    """Manuscript-aligned gated causal dilated TCN baseline.
+
+    Six dilated residual blocks, 128 feature channels and kernel size 7.
+    Dilations are 1, 2, 4, 8, 16 and 32.
+    """
     def __init__(self, input_channels=3, output_channels=12,
-                 num_filters=64, kernel_size=3, num_layers=6):
+                 num_filters=128, kernel_size=7, num_layers=6):
         super().__init__()
         self.in_proj  = nn.Conv1d(input_channels, num_filters, 1)
         self.tcn      = nn.ModuleList([

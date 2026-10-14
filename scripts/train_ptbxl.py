@@ -142,10 +142,10 @@ MODEL_SHEET    = {"bilstm":"BiLSTM","tcn":"TCN","transformer":"Transformer",
 MODEL_ORDER    = ["bilstm","tcn","transformer","atunet","unetpp","leXT-netv1","leXT-netv1s","leXT-netv2","leXT-netv2s"]
 EXCEL_PATH     = ROOT / "results" / "all_results_Norm_R.xlsx"
 
-# ── Original hyperparameters (preserved from source notebooks) ────────────────
+# ── Manuscript-aligned model/training hyperparameters ─────────────────────
 MODEL_CFG = {
     "bilstm":     dict(hidden_size=128, num_layers=2),
-    "tcn":        dict(num_filters=64, kernel_size=3, num_layers=6),
+    "tcn":        dict(num_filters=128, kernel_size=7, num_layers=6),
     # Transformer settings reproduced from try7TransOnemli.py
     "transformer": dict(d_model=64, nhead=4, num_layers=3,
                         dim_ff=256, dropout=0.1),
@@ -173,12 +173,11 @@ MODEL_CFG = {
 MODEL_LOSS  = {"bilstm":"L1","tcn":"L1","transformer":"MSE","atunet":"L1",
                "unetpp":"MSE","leXT-netv1":"combined","leXT-netv1s":"combined",
                "leXT-netv2":"combined","leXT-netv2s":"combined"}
-MODEL_LR    = {"bilstm":1e-3,"tcn":1e-3,"transformer":1e-3,"atunet":1e-3,
-               "unetpp":1e-3,"leXT-netv1":3e-4,"leXT-netv1s":3e-4,
-               "leXT-netv2":3e-4,"leXT-netv2s":3e-4}
-MODEL_BATCH = {"bilstm":16,"tcn":16,"transformer":16,"atunet":16,
-               "unetpp":16,"leXT-netv1":32,"leXT-netv1s":32,
-               "leXT-netv2":32,"leXT-netv2s":32}
+# All comparison models use the manuscript-specified optimisation settings.
+MODEL_LR    = {name:3e-4 for name in MODEL_ORDER}
+# Keep batch size identical across comparison models to remove an unnecessary
+# training-condition mismatch.
+MODEL_BATCH = {name:32 for name in MODEL_ORDER}
 
 # LeXT-Net models benefit from compile; baselines are fast enough without it
 USE_COMPILE = {"bilstm":False,"tcn":False,"transformer":False,"atunet":False,
@@ -255,22 +254,15 @@ def train_fold(model, x_tr, y_tr, model_name, epochs, device, n_workers,
     if use_compile and USE_COMPILE[model_name]:
         model = maybe_compile(model)
 
-    # Transformer preserves the optimizer used in the original Transformer experiment.
-    # Other serial baselines retain their existing optimizer settings.
-    if model_name == "transformer":
-        opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-    else:
-        opt = torch.optim.Adam(model.parameters(), lr=lr)
-    # LeXT-Net: warmup + cosine; baselines (including Transformer): constant LR
-    if model_name.startswith("leXT"):
-        warmup = torch.optim.lr_scheduler.LinearLR(
-            opt, start_factor=0.1, total_iters=5)
-        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-            opt, T_max=max(1, epochs-5), eta_min=1e-6)
-        sch = torch.optim.lr_scheduler.SequentialLR(
-            opt, schedulers=[warmup, cosine], milestones=[5])
-    else:
-        sch = None
+    # Manuscript protocol: identical optimisation for all comparison models.
+    # AdamW (lr=3e-4, wd=1e-4), 5-epoch linear warmup, then cosine annealing.
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    warmup = torch.optim.lr_scheduler.LinearLR(
+        opt, start_factor=0.1, total_iters=5)
+    cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+        opt, T_max=max(1, epochs-5), eta_min=1e-6)
+    sch = torch.optim.lr_scheduler.SequentialLR(
+        opt, schedulers=[warmup, cosine], milestones=[5])
 
     # TensorLoader: pre-load entire fold to GPU — zero per-batch CPU transfer
     t_load = time.time()
@@ -290,9 +282,9 @@ def train_fold(model, x_tr, y_tr, model_name, epochs, device, n_workers,
                 loss = (crit(out, yb, epoch=epoch)
                         if is_combined else crit(out, yb))
             sc.scale(loss).backward()
-            if model_name.startswith("leXT"):
-                sc.unscale_(opt)
-                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            # Same gradient-clipping rule for all comparison models.
+            sc.unscale_(opt)
+            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             sc.step(opt); sc.update()
             ep += loss.detach()  # no GPU→CPU sync per step
         if sch: sch.step()

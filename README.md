@@ -124,7 +124,7 @@ python scripts/train_multidataset.py --dataset chapman  --strategy ALL --model l
 python scripts/train_multidataset.py --dataset cpsc2018 --strategy EGV3
 ```
 
-`--model` options: `bilstm` | `tcn` | `atunet` | `unetpp` | `leXT-netv1` | `leXT-netv1s` | `leXT-netv2` | `leXT-netv2s` | `ALL`
+`--model` options: `bilstm` | `tcn` | `transformer` | `atunet` | `unetpp` | `leXT-netv1` | `leXT-netv1s` | `leXT-netv2` | `leXT-netv2s` | `ALL`
 
 ---
 
@@ -163,7 +163,10 @@ Datasets are not distributed with this repository.
 | Metrics | R², SSIM, PCC, MSC, MAE, RMSE, NRMSE, SNR |
 | Optimiser | AdamW lr=3×10⁻⁴, wd=10⁻⁴ |
 | Scheduler | 5-epoch warmup + cosine annealing |
-| Loss | 0.70·MAE + 0.25·(1−PCC) + 0.05·Physics + 0.02·Smooth |
+| Epochs | 100 |
+| Comparison batch size | 32 |
+| TCN baseline | 6 causal dilated blocks, 128 channels, k=7 |
+| LeXT-Net loss | 0.70·MAE + 0.25·(1−PCC) + 0.05·Physics + 0.02·Smooth |
 
 ---
 

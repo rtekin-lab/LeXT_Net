@@ -7,10 +7,10 @@ The configuration is taken from the original Transformer experiment script `try7
 - `nhead=4`
 - `num_layers=3`
 - `dim_feedforward=256` (the existing baseline class setting)
-- batch size `16`
+- batch size `32`
 - loss `MSE`
-- AdamW, learning rate `1e-3`, weight decay `1e-4`
+- AdamW, learning rate `3e-4`, weight decay `1e-4`
 - 100 epochs
-- no LR scheduler (constant learning rate)
+- 5-epoch linear warmup followed by cosine annealing
 
-The current repository cross-validation/data strategy pipeline is retained; only Transformer model registration and its original model-specific optimization settings are added.
+The current repository cross-validation/data strategy pipeline is retained. The Transformer is trained with the same manuscript-specified optimizer, scheduler, batch size, preprocessing, and training duration as the other comparison models.
