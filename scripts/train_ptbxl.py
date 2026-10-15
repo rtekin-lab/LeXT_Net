@@ -192,7 +192,10 @@ def parse_args():
     p.add_argument("--strategy",   default="ALL",
                    choices=["EGV1","EGV2","EGV3","QSI","ALL"])
     p.add_argument("--epochs",     type=int,   default=100)
-    p.add_argument("--folds",      type=int,   default=5)
+    p.add_argument("--folds",      type=int,   default=5,
+                   help="Number of CV folds used to define the split (paper protocol: 5)")
+    p.add_argument("--fold",       type=int, default=None, choices=[1,2,3,4,5],
+                   help="Train/evaluate only this fold from the fixed n-fold split; default: all folds")
     p.add_argument("--workers",    type=int,   default=4)
     p.add_argument("--seed",       type=int,   default=42)
     p.add_argument("--no_cuda",    action="store_true")
@@ -347,9 +350,16 @@ def run(model_name, strategy, signals, rec_ids, patient_ids, args, device):
     wdir.mkdir(parents=True, exist_ok=True)
     use_compile = not args.no_compile
 
-    for k, fold in enumerate(folds):
+    selected = list(enumerate(folds, start=1))
+    if args.fold is not None:
+        if args.fold > len(folds):
+            raise ValueError(f"--fold {args.fold} exceeds --folds {args.folds}")
+        selected = [(args.fold, folds[args.fold - 1])]
+
+    for fold_no, fold in selected:
         t0 = time.time()
-        log(f"\n  -- Fold {k+1}/{args.folds} {'─'*42}")
+        k = fold_no - 1
+        log(f"\n  -- Fold {fold_no}/{args.folds} {'─'*42}")
         x_tr, x_te, y_tr, y_te = get_fold(inputs, targets, fold)
         n_p = sum(p.numel() for p in build_model(model_name).parameters()
                   if p.requires_grad)
@@ -360,7 +370,7 @@ def run(model_name, strategy, signals, rec_ids, patient_ids, args, device):
         log("  [Training]")
         model = train_fold(model, x_tr, y_tr, model_name,
                            args.epochs, device, args.workers, use_compile)
-        torch.save(model.state_dict(), str(wdir/f"fold{k+1}.pth"))
+        torch.save(model.state_dict(), str(wdir/f"fold{fold_no}.pth"))
 
         log("  [Inference]")
         preds = predict(model, x_te, y_te, device, MODEL_BATCH[model_name])
@@ -373,7 +383,7 @@ def run(model_name, strategy, signals, rec_ids, patient_ids, args, device):
 
         r2  = np.mean([lm[ld]["R2"]  for ld in LEAD_ORDER])
         snr = np.mean([lm[ld]["snr"] for ld in LEAD_ORDER])
-        log(f"  Fold {k+1} done  mAll R²={r2:.4f}  SNR={snr:.2f} dB  "
+        log(f"  Fold {fold_no} done  mAll R²={r2:.4f}  SNR={snr:.2f} dB  "
             f"[{(time.time()-t0)/60:.1f} min]")
 
     means = {ld:{m:float(np.mean(acc[ld][m]))for m in METRIC_KEYS}
@@ -390,8 +400,10 @@ def run(model_name, strategy, signals, rec_ids, patient_ids, args, device):
         log(f"  │ {m:8s}  {mu:>12.6f}  {std:>10.6f}{'':10s}│")
     log(f"  └{'─'*55}┘")
 
-    if not args.no_excel:
+    if not args.no_excel and args.fold is None:
         write_excel(model_name, strategy, means, stds)
+    elif not args.no_excel and args.fold is not None:
+        log("  Single-fold run: Excel template update skipped to avoid overwriting 5-fold summary tables.")
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 

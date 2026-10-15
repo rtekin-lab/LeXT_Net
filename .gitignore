@@ -35,3 +35,7 @@ Desktop.ini
 
 # Logs
 *.log
+
+# Curated/reviewed tiny sample files may be committed deliberately.
+!sample_data/
+!sample_data/**

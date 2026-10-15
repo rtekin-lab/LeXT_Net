@@ -5,193 +5,197 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Zenodo](https://img.shields.io/badge/Zenodo-10.5281%2Fzenodo.23123820-blue)](https://doi.org/10.5281/zenodo.23123820)
 
-Official implementation of the paper:
+Official implementation of **LeXT-Net: A Lead-Adaptive Hierarchical Network for 3-Lead to 12-Lead ECG Reconstruction**.
 
-> **LeXT-Net: A Lead-Adaptive Hierarchical Network for 3-Lead to 12-Lead ECG Reconstruction**
-> Ramazan Tekin, Hazret Tekin, Mine Onat, Merve Akkuş, Yılmaz Kaya
-> *Scientific Reports* (under review) · [Zenodo](https://doi.org/10.5281/zenodo.23123820)
+## What this repository supports
 
----
+1. **Re-train LeXT-Net** on PTB-XL, Chapman-Shaoxing, or CPSC2018.
+2. Run either **one selected fold** or the full **5-fold protocol**.
+3. Train/evaluate on another compatible 12-lead ECG dataset through a simple manifest file.
+4. **Download pretrained checkpoints** from Zenodo and evaluate them without retraining.
+5. Produce machine-readable performance reports and reference-vs-reconstruction plots.
+6. Build small local sample subsets for smoke testing, subject to each source dataset's redistribution terms.
 
-## Overview
-
-Standard 12-lead ECG acquisition requires precise placement of ten electrodes by trained personnel — a constraint that cannot always be met in ambulatory monitoring, wearable sensing, or resource-limited settings. LeXT-Net reconstructs a full 12-lead ECG from only three input leads in a single forward pass.
-
-**Architecture:**
-- **[P1] Shared TCN backbone** — dilated residual blocks for global temporal context
-- **[H1] Batched Temporal Attention Gate** — per-lead temporal weighting, single grouped-convolution call
-- **[H2] Batched Projection** — channel reduction for all 12 leads simultaneously
-- **[P3] Lead-adaptive U-Net heads** — shallow for Einthoven-derivable limb leads, deeper for precordial
-- **Physics-informed loss** — Einthoven–Goldberger constraints + precordial smoothness + curriculum ramp
-
----
-
-## Quick Start — No Training Required
-
-Pre-trained weights are on Zenodo. Download and run inference immediately.
+## Installation
 
 ```bash
-git clone https://github.com/rtekin-lab/LeXT-Net.git
-cd LeXT-Net
+git clone https://github.com/rtekin-lab/LeXT_Net.git
+cd LeXT_Net
+python -m venv .venv
+# Linux/macOS: source .venv/bin/activate
+# Windows: .venv\\Scripts\\activate
 pip install -r requirements.txt
-
-# Download EGV3 weights (~100 MB)
-python scripts/download_weights.py --strategy EGV3
-
-# Reconstruct 12-lead ECG from a CSV file
-python scripts/predict.py --input your_ecg.csv --plot
-
-# Save output
-python scripts/predict.py --input your_ecg.csv --output reconstructed.csv --ensemble
 ```
 
-See [WEIGHTS.md](WEIGHTS.md) for the full weight catalogue and manual download instructions.
+## A. Train from scratch
 
----
-
-## Repository Structure
-
-```
-LeXT-Net/
-├── src/
-│   ├── models/
-│   │   ├── leXT_net.py        # LeXT-Net variants + CombinedLoss
-│   │   └── baselines.py       # BiLSTM, TCN, ECG-Transformer, UNet++, AtUNET
-│   ├── datasets.py            # PTB-XL, CPSC2018, Chapman loaders
-│   ├── transforms.py          # EGV1 / EGV2 / EGV3 / QSI input strategies
-│   ├── crossval.py            # Sequential 5-fold CV, patient-wise
-│   └── utils.py               # Dataset, normalisation, metrics
-├── scripts/
-│   ├── predict.py             # ← Inference with pre-trained weights
-│   ├── download_weights.py    # ← Download weights from Zenodo
-│   ├── train_ptbxl.py         # PTB-XL: all models comparison
-│   └── train_multidataset.py  # LeXT-Net: multi-dataset evaluation
-├── configs/
-│   └── paths.py               # ← Set dataset paths here before training
-├── results/
-│   ├── all_results_Norm_R.xlsx
-│   └── all_results_Norm_difDataSet.xlsx
-├── WEIGHTS.md
-└── requirements.txt
-```
-
----
-
-## predict.py
+Edit `configs/paths.py` to point to your local datasets.
 
 ```bash
-# Default: EGV3 strategy, leXT-netv1s, PTB-XL weights, fold 1
-python scripts/predict.py --input ecg.csv
+# Full 5-fold training
+python scripts/train_multidataset.py --dataset ptbxl --model leXT-netv2 --strategy EGV3
+python scripts/train_multidataset.py --dataset chapman --model leXT-netv2 --strategy EGV3
+python scripts/train_multidataset.py --dataset cpsc2018 --model leXT-netv2 --strategy EGV3
 
-# Ensemble (average all 5 folds — more robust)
-python scripts/predict.py --input ecg.csv --ensemble --output out.csv
+# Train only fold 3 from the same fixed 5-fold split
+python scripts/train_multidataset.py --dataset ptbxl --model leXT-netv2 --strategy EGV3 --fold 3
 
-# WFDB record (PTB-XL format)
-python scripts/predict.py --input records100/00000/00001_lr --format wfdb
-
-# Different strategy
-python scripts/predict.py --input ecg.csv --strategy EGV1
+# Quick smoke test
+python scripts/train_multidataset.py --dataset ptbxl --model leXT-netv2 --strategy EGV3 --fold 1 --max_rec 200 --epochs 2 --no_excel
 ```
 
-**Supported input formats:**
+`--fold 3` means “use fold 3 of the 5-fold protocol”; it does not redefine the experiment as one-fold CV.
 
-| Format | Columns | Sampling rate |
-|---|---|---|
-| CSV (Chapman / MUSE) | 12 or 3 | 500 Hz → auto-resampled to 100 Hz |
-| WFDB `.dat` + `.hea` | 12 | 100 Hz (PTB-XL records100) |
+For PTB-XL baseline comparisons, `scripts/train_ptbxl.py` also supports `--fold`.
 
-If a 12-lead CSV is provided, the selected strategy is applied to extract the 3-lead input automatically.
+## B. Evaluate pretrained models without training
 
----
-
-## Training From Scratch
-
-Edit `configs/paths.py` first, then:
+First inspect/download the checkpoints that are actually available on Zenodo:
 
 ```bash
-# PTB-XL — all models × all strategies × 5-fold CV
-python scripts/train_ptbxl.py --model ALL --strategy ALL
-
-# Single model (recommended first run)
-python scripts/train_ptbxl.py --model leXT-netv1s --strategy EGV3
-
-# Quick test
-python scripts/train_ptbxl.py --model leXT-netv1s --strategy EGV3 \
-    --max_rec 200 --epochs 3
-
-# Multi-dataset (LeXT-Net only)
-python scripts/train_multidataset.py --dataset chapman  --strategy ALL --model leXT-netv2s
-python scripts/train_multidataset.py --dataset cpsc2018 --strategy EGV3
+python scripts/download_weights.py --list
+python scripts/download_weights.py --dataset ptbxl --strategy EGV3 --model leXT-netv2
 ```
 
-`--model` options: `bilstm` | `tcn` | `transformer` | `atunet` | `unetpp` | `leXT-netv1` | `leXT-netv1s` | `leXT-netv2` | `leXT-netv2s` | `ALL`
+Then evaluate a labelled dataset:
 
----
+```bash
+python scripts/evaluate_pretrained.py --dataset ptbxl --strategy EGV3 --model leXT-netv2 --fold all
+python scripts/evaluate_pretrained.py --dataset chapman --strategy EGV3 --model leXT-netv2 --fold 1
+python scripts/evaluate_pretrained.py --dataset cpsc2018 --strategy EGV3 --model leXT-netv2 --fold all
+```
 
-## Datasets
+Outputs are written under `results/evaluation/...` and include full JSON metrics, separate normalized/physical summaries, lead-wise CSV files, checkpoint-hash metadata, and reference-vs-reconstruction plots. Physical MAE/RMSE are reported in canonical mV.
 
-| Dataset | Records | Fs | Download |
-|---|---|---|---|
-| **PTB-XL** | 21,837 | 100 Hz | [PhysioNet](https://physionet.org/content/ptb-xl/1.0.3/) — DOI: 10.13026/kfzx-aw45 |
-| **CPSC 2018** | 6,877 | 500 → 100 Hz | [ICBEB 2018](http://2018.icbeb.org/Challenge.html) |
-| **Chapman-Shaoxing** | 10,646 | 500 → 100 Hz | [Figshare](https://figshare.com/collections/ChapmanECG/4560497) |
+## C. Reconstruct a single recording
 
-Datasets are not distributed with this repository.
+```bash
+python scripts/predict.py --input ecg.csv --fs 500 \
+  --dataset ptbxl --strategy EGV3 --model leXT-netv2 --fold 1 --plot
 
----
+python scripts/predict.py --input ecg.csv --fs 100 \
+  --dataset ptbxl --strategy EGV3 --model leXT-netv2 --ensemble --output reconstructed.csv
+```
 
-## Model Variants
+Input may contain 12 leads (the selected 3-lead strategy is extracted automatically) or exactly 3 already-selected channels.
 
-| Model | Params | Speed | Notes |
-|---|---|---|---|
-| `leXT-netv2` | 18.6 M | 1× | Full model (paper results) |
-| `leXT-netv1` | ~11 M | 1× | No temporal gate, uniform head depth |
-| `leXT-netv2s` | ~4.5 M | ~4× | Slim: F=128, L=6, k=7, chest_d=2 |
-| **`leXT-netv1s`** | **~3 M** | **~4×** | **Default for inference** |
+**Important:** because training uses per-record/per-lead z-score normalization, `predict.py` reconstructs the target leads in normalized units. A physical-amplitude inverse transform for unseen target leads is not available from only three input leads. `evaluate_pretrained.py` can report retrospective physical-scale errors when a 12-lead reference is available.
 
----
+## D. Try LeXT-Net on another ECG dataset
 
-## Experimental Protocol
+LeXT-Net expects 12-lead data in this order:
 
-| Parameter | Value |
-|---|---|
-| Cross-validation | Sequential 5-fold, patient-wise |
-| Sampling rate | 100 Hz |
-| Recording length | 10 s (1,000 samples) |
-| Normalisation | Per-record, per-lead z-score |
-| Evaluation | mAll · mOther · mInd |
-| Metrics | R², SSIM, PCC, MSC, MAE, RMSE, NRMSE, SNR |
-| Optimiser | AdamW lr=3×10⁻⁴, wd=10⁻⁴ |
-| Scheduler | 5-epoch warmup + cosine annealing |
-| Epochs | 100 |
-| Comparison batch size | 32 |
-| TCN baseline | 6 causal dilated blocks, 128 channels, k=7 |
-| LeXT-Net loss | 0.70·MAE + 0.25·(1−PCC) + 0.05·Physics + 0.02·Smooth |
+```text
+I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6
+```
 
----
+Internally records are converted to **100 Hz × 10 s = 1000 samples** and canonical mV before normalization. For a new dataset, create a manifest:
+
+```csv
+path,format,fs,unit,patient_id,record_id
+records/r001.csv,csv,500,mV,P001,R001
+records/r002.csv,csv,250,uV,P002,R002
+records/r003,wfdb,500,,P003,R003
+```
+
+Named CSV/WFDB leads are reordered safely to the canonical 12-lead order. WFDB channel names and physical units are read from the header; the loader never silently assumes that the first 12 channels are the required ECG leads.
+
+Then:
+
+```bash
+python scripts/train_multidataset.py --dataset custom \
+  --manifest /path/to/manifest.csv --data_root /path/to/data \
+  --model leXT-netv2 --strategy EGV3 --fold 1
+```
+
+See [docs/DATASETS_AND_CUSTOM_DATA.md](docs/DATASETS_AND_CUSTOM_DATA.md).
+
+## E. Validate custom data and run a smoke test
+
+```bash
+python scripts/validate_dataset.py --manifest /path/to/manifest.csv --data-root /path/to/data --check-folds
+python scripts/smoke_test.py
+```
+
+The smoke test is synthetic and checks software integration only. Authentic source records are not automatically bundled because redistribution permissions differ among datasets. Maintainers can create small standardized subsets from local copies:
+
+```bash
+python scripts/build_sample_db.py --dataset ptbxl --n 3
+python scripts/build_sample_db.py --dataset chapman --n 3
+python scripts/build_sample_db.py --dataset cpsc2018 --n 3
+```
+
+See [sample_data/README.md](sample_data/README.md). Verify the original dataset licence before committing generated source-derived samples to GitHub.
+
+## Built-in datasets
+
+| Dataset | Repository loader | Native sampling | Model input |
+|---|---|---:|---:|
+| PTB-XL | WFDB `records100` | 100 Hz | 100 Hz, 10 s |
+| Chapman-Shaoxing | 12-lead CSV | 500 Hz | resampled to 100 Hz, 10 s; µV source converted to mV |
+| CPSC2018 | WFDB/MAT records | 500 Hz | first 10 s, resampled to 100 Hz; physical mV |
+
+Datasets are downloaded from their original providers and are not automatically redistributed by this repository.
+
+## Input strategies
+
+- `EGV1`: I, II, V1
+- `EGV2`: I, II, V2
+- `EGV3`: I, II, V3
+- `QSI`: V6, II, −0.5·V2
+
+## Experimental protocol
+
+- sampling rate: 100 Hz
+- duration: 10 s (1000 samples)
+- normalization: per-record, per-lead z-score
+- paper CV: 5 folds; PTB-XL is patient-grouped when patient IDs are available
+- optimizer: AdamW, lr 3e-4, weight decay 1e-4
+- scheduler: 5-epoch linear warm-up followed by cosine annealing
+- LeXT-Net loss: 0.70·MAE + 0.25·(1−PCC) + 0.05·inter-lead consistency + 0.02·precordial smoothness
+
+For Chapman/CPSC2018, the current built-in loader does not provide patient identifiers to the splitter; those experiments therefore use record-wise sequential folds unless patient/group metadata are supplied through the custom-manifest interface.
+
+## Repository structure
+
+```text
+src/
+  models/                 model definitions
+  datasets.py             PTB-XL / Chapman / CPSC2018 loaders
+  custom_data.py          manifest-based external dataset loader
+  transforms.py           EGV1 / EGV2 / EGV3 / QSI
+  crossval.py             sequential grouped folds
+scripts/
+  train_multidataset.py   main LeXT-Net training entry point
+  train_ptbxl.py          PTB-XL model-comparison training
+  evaluate_pretrained.py  no-training dataset evaluation + plots
+  predict.py              single-record inference
+  download_weights.py     dynamic Zenodo checkpoint downloader
+  build_sample_db.py      build small local test subsets
+configs/
+  paths.py                 local dataset paths
+docs/
+  DATASETS_AND_CUSTOM_DATA.md
+  PRETRAINED_EVALUATION.md
+  RELEASING_WEIGHTS.md
+sample_data/
+  README.md
+```
+
+## Pretrained checkpoint release
+
+Checkpoint filenames on Zenodo should follow:
+
+```text
+<dataset>__<strategy>__<model>__fold<k>.pth
+```
+
+The downloader discovers published files dynamically. See [WEIGHTS.md](WEIGHTS.md) and [docs/RELEASING_WEIGHTS.md](docs/RELEASING_WEIGHTS.md).
 
 ## Citation
 
-```bibtex
-@article{tekin2025lextnet,
-  title   = {{LeXT-Net}: A Lead-Adaptive Hierarchical Network for
-             3-Lead to 12-Lead {ECG} Reconstruction},
-  author  = {Tekin, Ramazan and Tekin, Hazret and Onat, Mine and
-             Akku{\c{s}}, Merve and Kaya, Y{\i}lmaz},
-  journal = {Scientific Reports},
-  year    = {2025},
-  doi     = {10.5281/zenodo.23123820},
-  note    = {Under review}
-}
-```
-
----
+Please cite the manuscript and the archived code record when using LeXT-Net. Update the bibliographic status/DOI to the final published article once available.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
-Data and weights are subject to their original licences (PTB-XL: CC-BY 4.0).
-
-## Contact
-
-Ramazan Tekin · Batman University · ramazan.tekin@batman.edu.tr
+Code: MIT. Dataset files and pretrained weights remain subject to their applicable source/archive terms.

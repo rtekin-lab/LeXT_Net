@@ -11,7 +11,7 @@ Usage:
     python scripts/train_multidataset.py --dataset chapman  --strategy ALL --model ALL
     python scripts/train_multidataset.py --dataset cpsc2018 --strategy EGV3 --model leXT-netv2
 
-Supported --dataset : ptbxl | cpsc2018 | chapman
+Supported --dataset : ptbxl | cpsc2018 | chapman | custom
 Supported --strategy: EGV1 | EGV2 | EGV3 | QSI | ALL
 Supported --model   : leXT-netv1 | leXT-netv2 | ALL  (default: leXT-netv2)
 
@@ -38,6 +38,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.datasets   import load_ptbxl, load_cpsc2018, load_chapman
+from src.custom_data import load_custom_manifest
 from src.transforms import apply_strategy
 from src.crossval   import sequential_patient_folds, get_fold
 from src.utils      import (ECGDataset, compute_lead_metrics_batch,
@@ -176,7 +177,7 @@ MODEL_ORDER = ["leXT-netv1", "leXT-netv1s", "leXT-netv2", "leXT-netv2s"]
 def parse_args():
     p = argparse.ArgumentParser(description="LeXT-Net multi-dataset evaluation")
     p.add_argument("--dataset",    default="chapman",
-                   choices=["ptbxl","cpsc2018","chapman"])
+                   choices=["ptbxl","cpsc2018","chapman","custom"])
     p.add_argument("--model",      default="leXT-netv2",
                    choices=["leXT-netv1","leXT-netv1s","leXT-netv2","leXT-netv2s","ALL"],
                    help="leXT-netv1 | leXT-netv1s | leXT-netv2 | leXT-netv2s | ALL")
@@ -184,7 +185,14 @@ def parse_args():
                    choices=["EGV1","EGV2","EGV3","QSI","ALL"])
     p.add_argument("--epochs",     type=int,   default=100)
     p.add_argument("--batch",      type=int,   default=32)
-    p.add_argument("--folds",      type=int,   default=5)
+    p.add_argument("--folds",      type=int,   default=5,
+                   help="Number of CV folds used to define the split (paper protocol: 5)")
+    p.add_argument("--fold",       type=int, default=None, choices=[1,2,3,4,5],
+                   help="Train/evaluate only this fold from the fixed n-fold split; default: all folds")
+    p.add_argument("--manifest",   default=None,
+                   help="Manifest CSV for --dataset custom")
+    p.add_argument("--data_root",  default=None,
+                   help="Optional base directory for relative paths in a custom manifest")
     p.add_argument("--workers",    type=int,   default=4)
     p.add_argument("--seed",       type=int,   default=42)
     p.add_argument("--no_cuda",    action="store_true")
@@ -297,7 +305,7 @@ def write_excel(dataset, strategy, lead_means, lead_stds, model_name="leXT-netv2
 def run_strategy(strategy, model_name, signals, rec_ids, patient_ids, dataset, args, device):
     log(f"\n{'='*62}")
     log(f"  STRATEGY: {strategy}   Dataset: {dataset}   Model: {model_name}")
-    log(f"  Folds: {args.folds}   Epochs: {args.epochs}   Batch: {args.batch}")
+    log(f"  CV folds: {args.folds}   Selected fold: {args.fold or 'ALL'}   Epochs: {args.epochs}   Batch: {args.batch}")
     log(f"{'='*62}")
 
     inputs  = apply_strategy(signals, strategy)
@@ -308,9 +316,16 @@ def run_strategy(strategy, model_name, signals, rec_ids, patient_ids, dataset, a
     wdir.mkdir(parents=True, exist_ok=True)
     use_compile = not args.no_compile
 
-    for k, fold in enumerate(folds):
+    selected = list(enumerate(folds, start=1))
+    if args.fold is not None:
+        if args.fold > len(folds):
+            raise ValueError(f"--fold {args.fold} exceeds --folds {args.folds}")
+        selected = [(args.fold, folds[args.fold - 1])]
+
+    for fold_no, fold in selected:
         t0 = time.time()
-        log(f"\n  -- Fold {k+1}/{args.folds} {'─'*42}")
+        k = fold_no - 1
+        log(f"\n  -- Fold {fold_no}/{args.folds} {'─'*42}")
         x_tr, x_te, y_tr, y_te = get_fold(inputs, targets, fold)
         log(f"  Train: {len(x_tr):,}   Test: {len(x_te):,}")
 
@@ -322,7 +337,7 @@ def run_strategy(strategy, model_name, signals, rec_ids, patient_ids, dataset, a
         model = train_fold(model, x_tr, y_tr, model_name,
                            args.epochs, args.batch,
                            device, args.workers, use_compile)
-        torch.save(model.state_dict(), str(wdir/f"fold{k+1}.pth"))
+        torch.save(model.state_dict(), str(wdir/f"fold{fold_no}.pth"))
 
         log("  [Inference]")
         preds = predict(model, x_te, y_te, device, args.batch)
@@ -335,7 +350,7 @@ def run_strategy(strategy, model_name, signals, rec_ids, patient_ids, dataset, a
 
         r2  = np.mean([lm[ld]["R2"]  for ld in LEAD_ORDER])
         snr = np.mean([lm[ld]["snr"] for ld in LEAD_ORDER])
-        log(f"  Fold {k+1} done  mAll R²={r2:.4f}  SNR={snr:.2f} dB  "
+        log(f"  Fold {fold_no} done  mAll R²={r2:.4f}  SNR={snr:.2f} dB  "
             f"[{(time.time()-t0)/60:.1f} min]")
 
     means = {ld:{m:float(np.mean(acc[ld][m]))for m in METRIC_KEYS}
@@ -350,8 +365,12 @@ def run_strategy(strategy, model_name, signals, rec_ids, patient_ids, dataset, a
         log(f"  │ {m:8s}  {mu:>12.6f} ± {std:<10.6f}│")
     log(f"  └{'─'*50}┘")
 
-    if not args.no_excel:
+    if not args.no_excel and dataset in DATASET_SHEET and args.fold is None:
         write_excel(dataset, strategy, means, stds, model_name=model_name)
+    elif not args.no_excel and dataset in DATASET_SHEET and args.fold is not None:
+        log("  Single-fold run: Excel template update skipped to avoid overwriting 5-fold summary tables.")
+    elif dataset == "custom" and not args.no_excel:
+        log("  Custom dataset: Excel template update skipped; weights and console metrics were saved.")
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -393,6 +412,13 @@ def main():
         signals, rec_ids = load_chapman(
             PATHS["chapman"], normalize=True,
             max_records=args.max_rec, verbose=True)
+    elif args.dataset == "custom":
+        if not args.manifest:
+            raise ValueError("--manifest is required when --dataset custom")
+        signals, rec_ids, patient_ids = load_custom_manifest(
+            args.manifest, data_root=args.data_root, normalize=True,
+            max_records=args.max_rec, verbose=True)
+        log(f"  Patient-wise split: {len(set(patient_ids)):,} patient/group IDs")
 
     log(f"  {signals.shape}  [{(time.time()-t0)/60:.1f} min]")
     assert signals.shape[1]==1000 and signals.shape[2]==12

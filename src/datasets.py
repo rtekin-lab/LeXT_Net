@@ -201,7 +201,7 @@ def load_ptbxl(
 #   - Row 0  : header  "I,II,III,aVR,aVL,aVF,V1,V2,V3,V4,V5,V6"  (BOM prefix ﻿)
 #   - Rows 1..5000 : 5000 data rows (500 Hz × 10 s)
 #   - 12 columns matching LEAD_ORDER exactly
-#   - Values in µV (MUSE system uses µV × 1000 convention — leave as-is for normalisation)
+#   - Original CSV values are treated as µV and converted to canonical mV before use.
 
 def load_chapman(
     chapman_path: str | Path,
@@ -263,7 +263,11 @@ def load_chapman(
                 )
                 continue
 
-            sig = df.values.astype(np.float32)         # (5000, 12)
+            # Original Chapman MUSE CSV amplitudes are handled as µV; convert
+            # to the repository canonical physical unit (mV). This scaling does
+            # not change per-record z-score training, but makes physical MAE/RMSE
+            # directly comparable to PTB-XL/CPSC2018.
+            sig = (df.values.astype(np.float32) / 1000.0)  # µV -> mV
 
             # Chapman raw shape should be 5000 (500 Hz × 10 s)
             # Resample to 100 Hz → 1000 samples
@@ -345,9 +349,26 @@ def load_cpsc2018(
             print(f"\r  CPSC2018  {i+1:>5}/{n}", end="", flush=True)
         try:
             rec_path        = str(hea.with_suffix(""))
-            data, header    = wfdb.rdsamp(rec_path)    # (7500, 12) at 500 Hz typically
-            sig             = data[:, :N_LEADS].astype(np.float32)
+            data, header    = wfdb.rdsamp(rec_path)    # physical values from header units
             fs              = header["fs"]              # should be 500
+
+            # CPSC2018 headers specify standard lead names and mV physical units.
+            # Reorder explicitly instead of silently taking the first 12 channels.
+            names = [str(x).strip() for x in header.get("sig_name", [])]
+            canon = {"I":"I","II":"II","III":"III","AVR":"aVR",
+                     "AVL":"aVL","AVF":"aVF","V1":"V1","V2":"V2",
+                     "V3":"V3","V4":"V4","V5":"V5","V6":"V6"}
+            mapped = [canon.get(n.upper(), n) for n in names]
+            missing = [ld for ld in LEAD_ORDER if ld not in mapped]
+            if missing:
+                raise ValueError(f"Missing CPSC2018 leads {missing} in {hea.stem}")
+            idx = [mapped.index(ld) for ld in LEAD_ORDER]
+            sig = data[:, idx].astype(np.float32)
+            units = header.get("units", [])
+            if units:
+                ordered_units = [str(units[j]).replace("μ","µ") for j in idx]
+                if any(u.lower() != "mv" for u in ordered_units):
+                    raise ValueError(f"Unexpected CPSC2018 physical units: {ordered_units}")
 
             # Crop to 10 s BEFORE resampling (avoids edge artefacts)
             ten_sec_samples = int(fs * 10)

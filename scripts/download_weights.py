@@ -1,177 +1,115 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+"""Download pretrained LeXT-Net checkpoints from the project Zenodo record.
+
+Expected Zenodo filename convention:
+  <dataset>__<strategy>__<model>__fold<k>.pth
 """
-download_weights.py  —  Download pre-trained LeXT-Net weights from Zenodo
-=========================================================================
-Downloads the pre-trained model weights published alongside the paper:
-
-    LeXT-Net: A Lead-Adaptive Hierarchical Network for
-    3-Lead to 12-Lead ECG Reconstruction
-    Tekin et al., Scientific Reports (2025)
-    Zenodo: https://doi.org/10.5281/zenodo.23123820
-
-Weights are stored under:
-    results/weights/<dataset>/<strategy>/<model>/fold<k>.pth
-
-Usage:
-    # Download all available weights (~391 MB)
-    python scripts/download_weights.py
-
-    # Download only a specific dataset / strategy / model
-    python scripts/download_weights.py --dataset ptbxl --strategy EGV3 --model leXT-netv1s
-
-    # List available weight files without downloading
-    python scripts/download_weights.py --list
-"""
-
-import os
-import sys
-import argparse
-import hashlib
-import json
-import urllib.request
+import argparse, hashlib, json, urllib.request
 from pathlib import Path
 
-ROOT     = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent
 ZENODO_DOI = "10.5281/zenodo.23123820"
 ZENODO_API = f"https://zenodo.org/api/records/{ZENODO_DOI.split('zenodo.')[1]}"
 
-# ── Weight file registry ───────────────────────────────────────────────────────
-# Each entry: relative path inside results/weights/ → Zenodo filename
-# (Populated automatically from the Zenodo record; listed here as fallback)
-WEIGHT_FILES = []
-for strategy in ["EGV1", "EGV2", "EGV3", "QSI"]:
-    for fold in range(1, 6):
-        rel = f"ptbxl/{strategy}/leXT-netv1s/fold{fold}.pth"
-        WEIGHT_FILES.append(rel)
-
-# ── CLI ───────────────────────────────────────────────────────────────────────
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Download LeXT-Net pre-trained weights")
-    p.add_argument("--dataset",  default="all",
-                   choices=["all", "ptbxl", "chapman", "cpsc2018"])
-    p.add_argument("--strategy", default="all",
-                   choices=["all", "EGV1", "EGV2", "EGV3", "QSI"])
-    p.add_argument("--model",    default="all",
-                   choices=["all", "leXT-netv1s", "leXT-netv2s",
-                            "leXT-netv1", "leXT-netv2"])
-    p.add_argument("--list",     action="store_true",
-                   help="List available files without downloading")
-    p.add_argument("--force",    action="store_true",
-                   help="Re-download even if file already exists")
+    p=argparse.ArgumentParser(description='Download LeXT-Net pretrained weights')
+    p.add_argument('--dataset',default='all',choices=['all','ptbxl','chapman','cpsc2018'])
+    p.add_argument('--strategy',default='all',choices=['all','EGV1','EGV2','EGV3','QSI'])
+    p.add_argument('--model',default='all',choices=['all','leXT-netv1','leXT-netv1s','leXT-netv2','leXT-netv2s'])
+    p.add_argument('--fold',default='all',choices=['all','1','2','3','4','5'])
+    p.add_argument('--list',action='store_true')
+    p.add_argument('--force',action='store_true')
+    p.add_argument('--no-verify',action='store_true',help='Skip checksum verification supplied by Zenodo')
     return p.parse_args()
 
 
-def filter_files(files, dataset, strategy, model):
-    result = []
-    for f in files:
-        parts = Path(f).parts   # e.g. ('ptbxl', 'EGV1', 'leXT-netv1s', 'fold1.pth')
-        if len(parts) < 4:
-            continue
-        ds, strat, mdl, _ = parts[0], parts[1], parts[2], parts[3]
-        if dataset  != "all" and ds    != dataset:  continue
-        if strategy != "all" and strat != strategy: continue
-        if model    != "all" and mdl   != model:    continue
-        result.append(f)
-    return result
-
-
-def fetch_zenodo_files():
-    """Query Zenodo API to get actual download URLs."""
+def fetch_files():
     try:
-        with urllib.request.urlopen(ZENODO_API, timeout=10) as resp:
-            data = json.loads(resp.read())
-        files = {}
-        for f in data.get("files", []):
-            name = f["key"]
-            url  = f["links"]["self"]
-            files[name] = url
-        return files
+        with urllib.request.urlopen(ZENODO_API,timeout=20) as r:
+            data=json.loads(r.read())
     except Exception as e:
-        print(f"  Warning: Could not reach Zenodo API ({e})")
-        print(f"  Visit https://doi.org/{ZENODO_DOI} to download manually.")
-        return {}
+        raise RuntimeError(f"Could not query Zenodo record {ZENODO_DOI}: {e}\nVisit https://doi.org/{ZENODO_DOI} manually.")
+    out=[]
+    for f in data.get('files',[]):
+        name=f.get('key','')
+        if not name.endswith('.pth') or '__' not in name: continue
+        parts=name[:-4].split('__')
+        if len(parts)!=4: continue
+        ds,st,mo,foldname=parts
+        if not foldname.startswith('fold'): continue
+        out.append({'name':name,'dataset':ds,'strategy':st,'model':mo,'fold':foldname[4:],
+                    'url':f['links']['self'],'checksum':f.get('checksum','')})
+    return out
 
 
-def download_file(url, dest_path, force=False):
-    if dest_path.exists() and not force:
-        print(f"  Already exists: {dest_path.name}")
-        return True
-    dest_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest_path.with_suffix(".tmp")
+def filt(files,a):
+    return [f for f in files if (a.dataset=='all' or f['dataset']==a.dataset)
+            and (a.strategy=='all' or f['strategy']==a.strategy)
+            and (a.model=='all' or f['model']==a.model)
+            and (a.fold=='all' or f['fold']==a.fold)]
+
+
+def digest(path,algorithm):
+    h=hashlib.new(algorithm)
+    with open(path,'rb') as fh:
+        for b in iter(lambda:fh.read(1024*1024),b''): h.update(b)
+    return h.hexdigest()
+
+
+def verify(path,checksum):
+    if not checksum: return True, 'no remote checksum'
+    if ':' not in checksum: return True, f'unrecognized checksum format: {checksum}'
+    alg,expected=checksum.split(':',1)
+    alg=alg.lower()
+    try: actual=digest(path,alg)
+    except ValueError: return True, f'unsupported checksum algorithm: {alg}'
+    return actual.lower()==expected.lower(), f'{alg}:{actual}'
+
+
+def download(item,dest,force=False,do_verify=True):
+    if dest.exists() and not force:
+        if do_verify:
+            ok,msg=verify(dest,item.get('checksum',''))
+            if not ok:
+                print('  checksum mismatch; re-download',dest)
+            else:
+                print('  present/verified',dest); return True
+        else:
+            print('  present ',dest); return True
+    dest.parent.mkdir(parents=True,exist_ok=True); tmp=dest.with_suffix('.tmp')
     try:
-        print(f"  Downloading {dest_path.name} ...", end="", flush=True)
-        def _progress(count, block, total):
-            if total > 0:
-                pct = min(count * block / total * 100, 100)
-                print(f"\r  Downloading {dest_path.name} ... {pct:.0f}%",
-                      end="", flush=True)
-        urllib.request.urlretrieve(url, tmp, reporthook=_progress)
-        tmp.rename(dest_path)
-        print(f"\r  ✓ {dest_path.name} ({dest_path.stat().st_size/1e6:.1f} MB)")
-        return True
+        print('  download',dest)
+        urllib.request.urlretrieve(item['url'],tmp)
+        if do_verify:
+            ok,msg=verify(tmp,item.get('checksum',''))
+            if not ok: raise RuntimeError(f'checksum verification failed ({msg})')
+        tmp.replace(dest); return True
     except Exception as e:
-        print(f"\r  ✗ Failed: {dest_path.name} — {e}")
+        print('  FAILED  ',dest,e)
         if tmp.exists(): tmp.unlink()
         return False
 
 
 def main():
-    args = parse_args()
-
-    files = filter_files(WEIGHT_FILES, args.dataset, args.strategy, args.model)
-
-    if args.list:
-        print(f"\nAvailable weight files ({len(files)} total):")
-        for f in files:
-            dest = ROOT / "results" / "weights" / f
-            status = "✓ present" if dest.exists() else "  missing"
-            print(f"  [{status}]  {f}")
-        print(f"\nZenodo: https://doi.org/{ZENODO_DOI}")
-        return
-
+    a=parse_args(); files=filt(fetch_files(),a)
     if not files:
-        print("No matching weight files found.")
+        print('No matching .pth checkpoint files are currently exposed by the Zenodo record.')
+        print(f'Zenodo: https://doi.org/{ZENODO_DOI}')
         return
-
-    print(f"\nLeXT-Net weight downloader")
-    print(f"Zenodo: https://doi.org/{ZENODO_DOI}")
-    print(f"Files to download: {len(files)}")
-    print(f"Destination: {ROOT / 'results' / 'weights'}\n")
-
-    # Fetch actual URLs from Zenodo
-    zenodo_files = fetch_zenodo_files()
-    if not zenodo_files:
-        print(f"\nCould not connect to Zenodo automatically.")
-        print(f"Please download manually from:")
-        print(f"  https://doi.org/{ZENODO_DOI}")
-        print(f"\nAfter downloading, place .pth files under:")
-        print(f"  results/weights/<dataset>/<strategy>/<model>/fold<k>.pth")
+    files=sorted(files,key=lambda f:(f['dataset'],f['strategy'],f['model'],int(f['fold'])))
+    if a.list:
+        print(f'Available checkpoints ({len(files)}):')
+        for f in files:
+            ck=f" [{f['checksum']}]" if f.get('checksum') else ''
+            print(f"  {f['dataset']}/{f['strategy']}/{f['model']}/fold{f['fold']}.pth{ck}")
         return
+    ok=0
+    for f in files:
+        dest=ROOT/'results'/'weights'/f['dataset']/f['strategy']/f['model']/f"fold{f['fold']}.pth"
+        ok += int(download(f,dest,a.force,not a.no_verify))
+    print(f'\nDownloaded/present: {ok}/{len(files)}')
+    if ok != len(files): raise SystemExit(2)
 
-    ok, fail = 0, 0
-    for rel_path in files:
-        # Zenodo filename format: dataset__strategy__model__fold<k>.pth
-        zenodo_name = rel_path.replace("/", "__")
-        if zenodo_name not in zenodo_files:
-            print(f"  ? Not found on Zenodo: {zenodo_name}")
-            fail += 1
-            continue
-        dest = ROOT / "results" / "weights" / rel_path
-        if download_file(zenodo_files[zenodo_name], dest, force=args.force):
-            ok += 1
-        else:
-            fail += 1
-
-    print(f"\n{'='*50}")
-    print(f"  Downloaded: {ok}   Failed: {fail}")
-    if ok > 0:
-        print(f"\nNow run inference without training:")
-        print(f"  python scripts/predict.py --input your_ecg.csv \\")
-        print(f"      --dataset ptbxl --strategy EGV3")
-    print(f"{'='*50}\n")
-
-
-if __name__ == "__main__":
-    main()
+if __name__=='__main__': main()

@@ -1,82 +1,54 @@
-# Pre-trained Model Weights
+# Pre-trained model weights
 
-Pre-trained LeXT-Net weights are published on Zenodo alongside the paper:
+LeXT-Net checkpoints are intended to be distributed through the project Zenodo record rather than GitHub:
 
-> **Zenodo DOI:** https://doi.org/10.5281/zenodo.23123820
+**Zenodo DOI:** https://doi.org/10.5281/zenodo.23123820
 
----
+The downloader queries the record dynamically, so it only advertises files that are actually published there. Downloads are checksum-verified against the checksum exposed by the Zenodo API by default.
 
-## Available Checkpoints
-
-| Dataset | Strategy | Model | Folds | Size |
-|---|---|---|---|---|
-| PTB-XL | EGV1, EGV2, EGV3, QSI | leXT-netv1s | 5 × 4 = 20 | ~400 MB |
-
-Each fold checkpoint is a standard PyTorch state dict (`.pth`).
-
-Expected directory layout after download:
-
-```
-results/weights/
-└── ptbxl/
-    ├── EGV1/leXT-netv1s/fold1.pth … fold5.pth
-    ├── EGV2/leXT-netv1s/fold1.pth … fold5.pth
-    ├── EGV3/leXT-netv1s/fold1.pth … fold5.pth
-    └── QSI/ leXT-netv1s/fold1.pth … fold5.pth
-```
-
----
-
-## Quick Download
+## Check availability
 
 ```bash
-# Download all weights automatically
-python scripts/download_weights.py
-
-# Download only EGV3 weights (best strategy, ~100 MB)
-python scripts/download_weights.py --strategy EGV3
-
-# List available files without downloading
 python scripts/download_weights.py --list
 ```
 
----
-
-## Manual Download
-
-If the automatic downloader fails, visit:
-
-**https://doi.org/10.5281/zenodo.23123820**
-
-Download the archive and extract it so that `.pth` files land in
-`results/weights/<dataset>/<strategy>/<model>/fold<k>.pth`.
-
----
-
-## Run Inference Without Training
-
-Once weights are downloaded:
+## Download a specific release subset
 
 ```bash
-# Reconstruct 12-lead ECG from a Chapman-format CSV (500 Hz, 12 cols)
-python scripts/predict.py --input your_ecg.csv
-
-# Use EGV3 strategy (best), ensemble of all 5 folds, save output
-python scripts/predict.py --input your_ecg.csv \
-    --strategy EGV3 --ensemble --output reconstructed.csv
-
-# Plot the reconstruction
-python scripts/predict.py --input your_ecg.csv --plot
+python scripts/download_weights.py --dataset ptbxl --strategy EGV3 --model leXT-netv2
+python scripts/download_weights.py --dataset chapman --strategy EGV3 --model leXT-netv2
+python scripts/download_weights.py --dataset cpsc2018 --strategy EGV3 --model leXT-netv2
 ```
 
----
+Expected local layout:
 
-## Naming Convention on Zenodo
-
-Zenodo filenames use double-underscore as path separator:
-
-```
-ptbxl__EGV3__leXT-netv1s__fold1.pth
+```text
+results/weights/<dataset>/<strategy>/<model>/fold<k>.pth
 ```
 
-The `download_weights.py` script handles the renaming automatically.
+Example:
+
+```text
+results/weights/ptbxl/EGV3/leXT-netv2/fold1.pth
+```
+
+## Evaluate without training
+
+```bash
+python scripts/evaluate_pretrained.py --dataset ptbxl --strategy EGV3 --model leXT-netv2 --fold all
+```
+
+For a single recording or 3-lead input, use `scripts/predict.py`. For a labelled 12-lead dataset and performance report, use `scripts/evaluate_pretrained.py`.
+
+See `docs/PRETRAINED_EVALUATION.md` and `docs/RELEASING_WEIGHTS.md`.
+
+
+## Release provenance
+
+Maintainers can generate `weights_manifest.csv` with SHA-256 digests using:
+
+```bash
+python scripts/build_weights_manifest.py --weights-dir /path/to/release_checkpoints --out weights_manifest.csv --code-version v1.0.0
+```
+
+See `docs/RELEASING_WEIGHTS.md`.

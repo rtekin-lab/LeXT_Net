@@ -31,7 +31,7 @@ Input formats supported:
             OR rows=samples, cols=3 leads (already reduced)
     wfdb  : WFDB record path (without extension), e.g. records100/00000/00001_lr
 
-Default model: leXT-netv1s trained on PTB-XL with EGV3 strategy (best overall)
+Default model: leXT-netv2 (paper model) with EGV3 strategy
 """
 
 import sys
@@ -92,15 +92,17 @@ def parse_args():
     p.add_argument("--format",   default="auto",
                    choices=["auto", "csv", "wfdb"],
                    help="Input format (default: auto-detect from extension)")
+    p.add_argument("--fs",       type=int, default=None,
+                   help="Input sampling rate in Hz. Recommended for custom data; otherwise inferred from record length.")
     p.add_argument("--dataset",  default="ptbxl",
                    choices=["ptbxl", "chapman", "cpsc2018"],
                    help="Dataset the model was trained on (default: ptbxl)")
     p.add_argument("--strategy", default="EGV3",
                    choices=["EGV1", "EGV2", "EGV3", "QSI"],
                    help="3-lead input strategy used during training (default: EGV3)")
-    p.add_argument("--model",    default="leXT-netv1s",
+    p.add_argument("--model",    default="leXT-netv2",
                    choices=list(MODEL_CFG.keys()),
-                   help="Model variant (default: leXT-netv1s)")
+                   help="Model variant (default: leXT-netv2)")
     p.add_argument("--fold",     type=int, default=1,
                    choices=[1, 2, 3, 4, 5],
                    help="Which fold checkpoint to use (default: 1)")
@@ -252,11 +254,11 @@ def main():
     if fmt == "csv":
         sig = load_csv(args.input)
         # Auto-detect fs from row count
-        fs  = 500 if sig.shape[0] >= 3000 else 100
+        fs  = args.fs if args.fs is not None else (500 if sig.shape[0] >= 3000 else 100)
     else:
         sig = load_wfdb(args.input)
         # WFDB header has fs — assume 100 for PTB-XL lr, 500 otherwise
-        fs  = 100 if sig.shape[0] == 1000 else 500
+        fs  = args.fs if args.fs is not None else (100 if sig.shape[0] == 1000 else 500)
 
     print(f"  Raw shape: {sig.shape}  (fs={fs} Hz)")
 
@@ -293,6 +295,8 @@ def main():
 
     # ── Output ────────────────────────────────────────────────────
     print(f"\n  Reconstruction complete — shape: {y12.shape}")
+    print("  Output space: per-record/per-lead normalized units (z-score).")
+    print("  Physical target-lead amplitudes cannot be recovered from 3 input leads alone under this training normalization.")
 
     if args.output:
         import pandas as pd

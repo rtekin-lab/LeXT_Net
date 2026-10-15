@@ -62,6 +62,10 @@ def sequential_patient_folds(
     the protocol described in Section 3.1 of the paper.
     """
     n = len(rec_ids)
+    if n_folds < 2:
+        raise ValueError("n_folds must be >= 2. For a single run, define the normal 5-fold split and select one fold.")
+    if n_folds > n:
+        raise ValueError(f"n_folds={n_folds} exceeds number of records={n}")
     indices = np.arange(n)
 
     if patient_ids is None:
@@ -83,6 +87,11 @@ def sequential_patient_folds(
     order = np.argsort(first_occurrence)
     unique_patients = unique_patients[order]
     n_patients = len(unique_patients)
+    if n_patients < n_folds:
+        raise ValueError(
+            f"Only {n_patients} unique patient/group IDs are available for {n_folds} folds. "
+            "Use more records/groups or fewer folds (>=2)."
+        )
 
     # Split patients into n_folds consecutive blocks
     pat_fold_size = n_patients // n_folds
