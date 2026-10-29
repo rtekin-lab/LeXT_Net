@@ -9,7 +9,7 @@ Official implementation of the manuscript:
 
 > **LeXT-Net: A Lead-Adaptive Hierarchical Network for 3-Lead to 12-Lead ECG Reconstruction**  
 > Ramazan Tekin, Hazret Tekin, Mine Onat, Merve Akkuş, Yılmaz Kaya  
-> *Scientific Reports* — manuscript under review  
+> *Scientific Reports* — accepted for publication; production in progress
 > [Source code](https://github.com/rtekin-lab/LeXT_Net) · [Zenodo archive](https://doi.org/10.5281/zenodo.23123820)
 
 ---
@@ -437,7 +437,7 @@ If you use LeXT-Net in your research, please cite the manuscript and the corresp
   author = {Tekin, Ramazan and Tekin, Hazret and Onat, Mine and
             Akkuş, Merve and Kaya, Yılmaz},
   year   = {2026},
-  note   = {Manuscript under review at Scientific Reports}
+  note   = {Accepted for publication in Scientific Reports; final bibliographic details pending}
 }
 ```
 
